@@ -1,0 +1,9 @@
+oracle:
+    - if the num of nodes increases, call a function that accepts all the remaining nodes,
+    and then send link state info to those nodes and their neighbours
+
+virtual_node:
+    - handle_update_ls()
+
+- test across different laptops
+- strings should be sent in binary format, create encoding and decoding functions
