@@ -10,18 +10,18 @@
 
 #define PORT 5000
 #define BUFFER_SIZE 1024
-#define IP_ADDR_ORACLE "172.25.153.68"
+#define IP_ADDR_ORACLE "127.0.0.1"
 
 using namespace std;
 
 int main(){
-    std::cout << "Enter IP of node : ";
-    string IP_ADDR_NODE;
-    cin >> IP_ADDR_NODE;
-    std:cout << std::endl;
-    std::cout << "Enter Port of Node : ";
-    short PORT_SELF;
-    cin >> PORT_SELF;
+    // std::cout << "Enter IP of node : ";
+    string IP_ADDR_NODE = "127.0.0.1";
+    // cin >> IP_ADDR_NODE;
+    // std:cout << std::endl;
+    // std::cout << "Enter Port of Node : ";
+    short PORT_SELF = 5001;
+    // cin >> PORT_SELF;
 
     // create a socket
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -48,13 +48,15 @@ int main(){
     
     // recieve link state information
     char recv_buffer[BUFFER_SIZE];
-    memset(recv_buffer, '\0', BUFFER_SIZE);
-    int sizeread = recv(sockfd, recv_buffer, BUFFER_SIZE, 0);
-    if (sizeread < 0) {
-        perror("recieving message from server failed");
-        return EXIT_FAILURE;
+    while (1){
+        memset(recv_buffer, '\0', BUFFER_SIZE);
+        int sizeread = recv(sockfd, recv_buffer, BUFFER_SIZE, 0);
+        if (sizeread < 0) {
+            perror("recieving message from server failed");
+            return EXIT_FAILURE;
+        }
+        // recv_buffer[sizeread] = '\0';
+        if (sizeread > 0)
+        cout << recv_buffer << endl;
     }
-    // recv_buffer[sizeread] = '\0';
-    cout << recv_buffer << endl;
-
 }

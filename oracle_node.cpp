@@ -12,7 +12,7 @@
 
 #define PORT 5000
 #define BUFFER_SIZE 1024
-#define IP_ADDR_ORACLE "172.25.153.68"
+#define IP_ADDR_ORACLE "127.0.0.1"
 
 using namespace std;
 
@@ -81,6 +81,114 @@ string generate_link_state_message(int n, vector<vector<int>> &mat, unordered_ma
     return msg;
 }
 
+pair<string, int> getVNAddrPort(char * buffer){
+    char ipaddr[BUFFER_SIZE];
+    int index = 0;
+    while (buffer[index] != ','){
+        ipaddr[index] = buffer[index];
+        index++;
+    }
+    int length = index;
+    ipaddr[length] = '\0';
+    index++;
+    int start = index;
+    char udpport[BUFFER_SIZE];
+    while (buffer[index] != '\0'){
+        udpport[index - start] = buffer[index];
+        index++;
+    }
+    udpport[index - start] = '\0';
+
+    int udp_port = atoi(udpport);
+    string ipaddrstr = ipaddr;
+    
+    return make_pair(ipaddrstr, udp_port);
+}
+
+// accept more nodes
+int acceptMoreNodes(int oracle_fd, int old_size, vector<vector<int>> & new_adj, 
+    unordered_map<int, pair<string,int>> & client_info,
+    vector<int> & client_sockets){
+    cout << "hiiii" << endl;
+    int new_size = new_adj.size();
+    int new_nodes = new_size - old_size;
+    int connections_read = 0;
+    int connections_established = 0;
+
+    // accept new_nodes number of new connections
+    fd_set read_fd;
+    int max_fd;
+    while (connections_read < new_nodes) {
+        FD_ZERO(&read_fd);
+        FD_SET(oracle_fd, &read_fd);
+        max_fd = oracle_fd;
+        for (int i=old_size; i<new_size; i++) {
+            if (client_sockets[i] != -1) {
+                FD_SET(client_sockets[i], &read_fd);
+            }
+            if (client_sockets[i] > max_fd) {
+                max_fd = client_sockets[i];
+            }
+        }
+        int n = select(max_fd+1, &read_fd, NULL, NULL, NULL);
+        if (n < 0) {
+            perror("Selecting Failed");
+            return -1;
+        }
+        
+        // If oracle fd is set, we have a new connection
+        if (FD_ISSET(oracle_fd, &read_fd)) {
+            struct sockaddr_in client_addr;
+            int addr_size = sizeof(client_addr);
+            int new_socket_fd = accept(oracle_fd, (struct sockaddr *)&client_addr, (socklen_t *)&addr_size);
+            if (new_socket_fd < 0) {
+                perror("Accepting new connection failed");
+                return -1;
+            }
+            cout << "Accepted Connection From IP Addr :" <<  inet_ntoa(client_addr.sin_addr) << "in Port" << client_addr.sin_port << endl;
+            client_sockets[old_size + connections_established++] = new_socket_fd;
+        }
+        
+        // if a socket fd is set we are ready to read
+        for (int i=old_size; i<new_size; i++) {
+            int client_fd = client_sockets[i];
+            if (client_fd != -1 && FD_ISSET(client_fd, &read_fd)) {
+                char buffer[BUFFER_SIZE];
+                memset(buffer, '\0', BUFFER_SIZE);
+
+                recv(client_fd, buffer, BUFFER_SIZE, 0);
+
+                // store information about virtual node
+                client_info[client_fd] = getVNAddrPort(buffer);
+                connections_read++;
+                cout << "Client" << i << " has info :";
+                cout << client_info[client_fd].first << " " << client_info[client_fd].second << endl;
+            }
+        }
+    }
+
+    // send link state to these nodes and their neighbours
+    // find nodes that you need to send to
+    vector<bool> active(new_size, false);
+    for (int i = old_size; i < new_size; i++){
+        active[i] = true;
+        for (int j = 0; j < new_size; j++){
+            if (new_adj[i][j] > 0) active[j] = true;
+        }
+    }
+
+    // send the link state information
+    for (int i=0; i<new_size; i++) {
+        if (!active[i]) continue;
+        int fd = client_sockets[i];
+        string msg = generate_link_state_message(i, new_adj, client_info, client_sockets);
+        send(fd, msg.c_str(), msg.length(), 0);        
+    }
+
+    return 0;
+}
+
+
 int main() {
     filesystem::path file = "config.txt";
     auto last_write = filesystem::last_write_time(file);
@@ -124,87 +232,8 @@ int main() {
     // socketfd -> <ipaddr,udpport>
     unordered_map<int, pair<string,int>> client_info;  // socketfd -> <ipaddr,udpport>
     vector<int> client_sockets(num_nodes, -1);
-    fd_set read_fd;
-    int max_fd;
-    while (connections_read < num_nodes) {
-        FD_ZERO(&read_fd);
-        FD_SET(oracle_fd, &read_fd);
-        max_fd = oracle_fd;
-        for (int i=0; i<num_nodes; i++) {
-            if (client_sockets[i] != -1) {
-                FD_SET(client_sockets[i], &read_fd);
-            }
-            if (client_sockets[i] > max_fd) {
-                max_fd = client_sockets[i];
-            }
-        }
-        int n = select(max_fd+1, &read_fd, NULL, NULL, NULL);
-        if (n < 0) {
-            perror("Selecting Failed");
-            return EXIT_FAILURE;
-        }
-        
-        // If oracle fd is set, we have a new connection
-        if (FD_ISSET(oracle_fd, &read_fd)) {
-            struct sockaddr_in client_addr;
-            int addr_size = sizeof(client_addr);
-            int new_socket_fd = accept(oracle_fd, (struct sockaddr *)&client_addr, (socklen_t *)&addr_size);
-            if (new_socket_fd < 0) {
-                perror("Accepting new connection failed");
-                return EXIT_FAILURE;
-            }
-            cout << "Accepted Connection From IP Addr :" <<  inet_ntoa(client_addr.sin_addr) << "in Port" << client_addr.sin_port << endl;
-            client_sockets[connections_established++] = new_socket_fd;
-        }
-        
-        // if a socket fd is set we are ready to read
-        for (int i=0; i<num_nodes; i++) {
-            int client_fd = client_sockets[i];
-            if (client_fd != -1 && FD_ISSET(client_fd, &read_fd)) {
-                char buffer[BUFFER_SIZE];
-                memset(buffer, '\0', BUFFER_SIZE);
-
-                recv(client_fd, buffer, BUFFER_SIZE, 0);
-
-                // cout << buffer << endl;
-
-                // store information about virtual node
-                {
-                    char ipaddr[BUFFER_SIZE];
-                    int index = 0;
-                    while (buffer[index] != ','){
-                        ipaddr[index] = buffer[index];
-                        index++;
-                    }
-                    int length = index;
-                    ipaddr[length] = '\0';
-                    index++;
-                    int start = index;
-                    char udpport[BUFFER_SIZE];
-                    while (buffer[index] != '\0'){
-                        udpport[index - start] = buffer[index];
-                        index++;
-                    }
-                    udpport[index - start] = '\0';
-
-                    int udp_port = atoi(udpport);
-                    string ipaddrstr = ipaddr;
-                    client_info[client_fd] = {ipaddrstr, udp_port};
-                    connections_read++;
-                    cout << "Client" << i << " has info :";
-                    cout << ipaddrstr << " " << udp_port << endl;
-                }
-
-            }
-        }
-    }
-
-    // send the link state information
-    for (int i=0; i<num_nodes; i++) {
-        int fd = client_sockets[i];
-        string msg = generate_link_state_message(i, adj, client_info, client_sockets);
-        send(fd, msg.c_str(), msg.length(), 0);        
-    }
+    
+    acceptMoreNodes(oracle_fd, 0, adj, client_info, client_sockets);
 
     // if file changes, convey that information
     while (true) {
@@ -213,6 +242,15 @@ int main() {
         if (check_write != last_write) {
             cout << "Config File Has been Modified\n";
             vector<vector<int>> new_adj = loadAdjacencyMatrix("config.txt");
+            int new_size = new_adj.size();
+            if (new_size > num_nodes){
+                if (acceptMoreNodes(oracle_fd, num_nodes, new_adj, client_info, client_sockets) < 0){
+                    cout << "Could not accept more nodes" << endl;
+                    return -1;
+                }
+                continue;
+            }
+
             for (int i=0; i<num_nodes; i++) {
                 bool changed = false;
                 for (int j=0; j<num_nodes; j++) {
