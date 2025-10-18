@@ -1,1 +1,0 @@
-- strings should be sent in binary format, create encoding and decoding functions

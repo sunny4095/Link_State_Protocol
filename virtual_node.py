@@ -1,16 +1,23 @@
 import socket
 from select import select
 from time import time
+import sys
 
 PERIODIC_FLOOD = 20
 
-# IP_ADDR_ORACLE = input("Enter IP Address of Oracle : ")
-# TCP_PORT_ORACLE = input("Enter TCP Port of Oracle : ")
-# IP_ADDR = input("Enter my IP Address : ")
-UDP_PORT = int(input("Enter My UDP Port :"))
-IP_ADDR_ORACLE = "127.0.0.1"
-IP_ADDR = "127.0.0.1"
-TCP_PORT_ORACLE = 5000
+if len(sys.argv) < 5:
+    print("Usage python", sys.argv[0], "<ip-oracle> <port-oracle> <ip-vn> <port-vn>")
+    exit(1)
+
+IP_ADDR_ORACLE = sys.argv[1]
+TCP_PORT_ORACLE = int(sys.argv[2])
+IP_ADDR = sys.argv[3]
+UDP_PORT = int(sys.argv[4])
+
+# IP_ADDR_ORACLE = "192.168.137.232"
+# IP_ADDR = "192.168.137.232"
+# TCP_PORT_ORACLE = 5000
+# UDP_PORT = int(sys.argv[1])
 
 tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_socket.connect((IP_ADDR_ORACLE, TCP_PORT_ORACLE))
@@ -76,7 +83,6 @@ def generateLSP():
         base_index += 2
 
     seq_num[self_id] += 1
-    print(packet)
     return bytes(packet)
 
 # function to flood LSPs to neighbours
