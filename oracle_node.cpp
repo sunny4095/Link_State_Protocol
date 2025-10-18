@@ -2,17 +2,17 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/select.h>
 #include <filesystem>
 #include <chrono>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+
+#pragma comment(lib, "ws2_32.lib")
 
 #define PORT 5000
 #define BUFFER_SIZE 1024
-#define IP_ADDR_ORACLE "127.0.0.1"
+#define IP_ADDR_ORACLE "192.168.137.232"
 
 using namespace std;
 
@@ -189,8 +189,23 @@ int acceptMoreNodes(int oracle_fd, int old_size, vector<vector<int>> & new_adj,
 }
 
 
-int main() {
-    filesystem::path file = "config.txt";
+int main(int argc, char * argv[]) {
+    // check if filename was provided
+    if (argc < 2){
+        cout << "Usage : " << argv[0] << " <config-file>" << endl;
+        return 1;
+    }
+
+    string filename = argv[1];
+
+    // Initialize Winsock
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+        cerr << "WSAStartup failed\n";
+        return 1;
+    }
+
+    filesystem::path file = filename;
     auto last_write = filesystem::last_write_time(file);
     vector<vector<int>> adj = loadAdjacencyMatrix("config.txt");
     int num_nodes = adj.size();
@@ -214,7 +229,8 @@ int main() {
     // BIND THE SOCKET
     oracle_server.sin_family = AF_INET;
     oracle_server.sin_port = htons(PORT);
-    oracle_server.sin_addr.s_addr = inet_addr(IP_ADDR_ORACLE);
+    // oracle_server.sin_addr.s_addr = inet_addr(IP_ADDR_ORACLE);
+    inet_pton(AF_INET, IP_ADDR_ORACLE, &oracle_server.sin_addr);
     if (bind(oracle_fd, (struct sockaddr *) &oracle_server, sizeof(oracle_server)) < 0) {
         perror("binding the oracle socket failed");
         return EXIT_FAILURE;
@@ -272,6 +288,9 @@ int main() {
             adj = new_adj;
             last_write = check_write;
         }
-        sleep(10);
+        Sleep(10000);
     }
+
+    closesocket(oracle_fd);
+    WSACleanup();
 }
