@@ -248,24 +248,24 @@ int main() {
                     cout << "Could not accept more nodes" << endl;
                     return -1;
                 }
-                continue;
             }
-
-            for (int i=0; i<num_nodes; i++) {
-                bool changed = false;
-                for (int j=0; j<num_nodes; j++) {
-                    if (new_adj[i][j] != adj[i][j]) {
-                        changed = true;
-                        break;
+            else {
+                for (int i=0; i<num_nodes; i++) {
+                    bool changed = false;
+                    for (int j=0; j<num_nodes; j++) {
+                        if (new_adj[i][j] != adj[i][j]) {
+                            changed = true;
+                            break;
+                        }
                     }
-                }
-                if (changed) {
-                    // send link state of i
-                    int fd = client_sockets[i];
-                    string msg = generate_link_state_message(i, new_adj, client_info, client_sockets);
-                    if (send(fd, msg.c_str(), msg.length(), 0) < 0) {
-                        perror("Sending failed");
-                        return EXIT_FAILURE;
+                    if (changed) {
+                        // send link state of i
+                        int fd = client_sockets[i];
+                        string msg = generate_link_state_message(i, new_adj, client_info, client_sockets);
+                        if (send(fd, msg.c_str(), msg.length(), 0) < 0) {
+                            perror("Sending failed");
+                            return EXIT_FAILURE;
+                        }
                     }
                 }
             }

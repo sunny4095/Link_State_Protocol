@@ -47,8 +47,6 @@ self_id, neighbour_info, ip_port_to_id = process_link_state_info(link_state_info
 seq_num = {}
 seq_num[self_id] = 0
 
-process_link_state_info(link_state_info)
-
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket.bind((IP_ADDR, UDP_PORT))
 
@@ -94,6 +92,34 @@ def handle_update_ls():
     
     return
 
+def get_curr_size(adj_list):
+    l = 0
+    r = 25
+
+    ans = r
+
+    while l <= r:
+        m = (l + r) // 2
+        row_null = True
+        for i in range(26):
+            if adj_list[m][i] != -1:
+                row_null = False
+                break
+
+        col_null = True
+        for i in range(26):
+            if adj_list[i][m] != -1:
+                col_null = False
+                break
+        
+        if row_null and col_null:
+            ans = m
+            r = m - 1
+        else:
+            l = m + 1
+
+    return ans
+
 flood()
 
 last_time = time()
@@ -105,7 +131,8 @@ while True:
 
     read_fds, _, _ = select([tcp_socket, udp_socket], [], [], PERIODIC_FLOOD)
     # printing current adjacency list
-    print("\n".join([" ".join(map(str, row[:5])) for row in adj_list[:5]]))
+    curr_size = get_curr_size(adj_list)
+    print("\n".join([" ".join(map(str, row[:curr_size])) for row in adj_list[:curr_size]]))
 
     curr_time = time()
 
