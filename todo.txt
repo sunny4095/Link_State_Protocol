@@ -4,6 +4,7 @@ oracle:
 
 virtual_node:
     - handle_update_ls()
+    - what do we wanna do about adj[i][i]
 
-- test across different laptops
+- test across different laptops (tcp and udp both)
 - strings should be sent in binary format, create encoding and decoding functions
