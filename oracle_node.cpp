@@ -12,7 +12,7 @@
 
 #define PORT 5000
 #define BUFFER_SIZE 1024
-#define IP_ADDR_ORACLE "192.168.137.232"
+#define IP_ADDR_ORACLE "127.0.0.1"
 
 using namespace std;
 
@@ -58,51 +58,98 @@ vector<vector<int>> loadAdjacencyMatrix(const string &filename) {
     return adj;
 }
 
-string generate_link_state_message(int n, vector<vector<int>> &mat, unordered_map<int, pair<string,int>> &client_info, vector<int> &client_sockets) {
-    int num_nodes = mat.size();
-    int fd = client_sockets[n];
-    auto [ipaddr, port] = client_info[fd];
-    // send (node alphabet, ip addr, udp port, cost) of neighbors
-    
-    // send info of curr node
-    string msg = "";
-    msg += to_string(n) + "," + ipaddr + "," + to_string(port) + "," + to_string(0);
-
-    for (int adj_node=0; adj_node<num_nodes; adj_node++) {
-        if (mat[n][adj_node] > 0) {
-            int cost = mat[n][adj_node];
-            int adj_fd = client_sockets[adj_node];
-            auto [adjip, adjport] = client_info[adj_fd];
-            msg += ";" + to_string(adj_node) + "," + adjip + "," 
-            + to_string(adjport) + "," + to_string(cost);
+vector<int> getComponents(string ipaddr){
+    vector<int> ans;
+    string current = "";
+    for (char c : ipaddr){
+        if (c == '.'){
+            ans.push_back(stoi(current));
+            current = "";
+            continue;
         }
+
+        current += c;
     }
-    msg[msg.length()] = '\0';
-    return msg;
+
+    ans.push_back(stoi(current)); 
+    return ans;   
 }
 
-pair<string, int> getVNAddrPort(char * buffer){
-    char ipaddr[BUFFER_SIZE];
-    int index = 0;
-    while (buffer[index] != ','){
-        ipaddr[index] = buffer[index];
-        index++;
-    }
-    int length = index;
-    ipaddr[length] = '\0';
-    index++;
-    int start = index;
-    char udpport[BUFFER_SIZE];
-    while (buffer[index] != '\0'){
-        udpport[index - start] = buffer[index];
-        index++;
-    }
-    udpport[index - start] = '\0';
-
-    int udp_port = atoi(udpport);
-    string ipaddrstr = ipaddr;
+void generate_link_state_message(unsigned char * buffer, int n, vector<vector<int>> &mat, unordered_map<int, pair<string,int>> &client_info, vector<int> &client_sockets) {
+    // set to 0 initially
+    memset((void *) buffer, 0, BUFFER_SIZE);
     
-    return make_pair(ipaddrstr, udp_port);
+    int base_index = 0;
+    buffer[base_index] = n;
+    int fd = client_sockets[n];
+    auto [ipaddr, port] = client_info[fd];
+
+    vector<int> vecip = getComponents(ipaddr);
+    int first = vecip[0];
+    int second = vecip[1];
+    int third = vecip[2];
+    int fourth = vecip[3];
+
+    buffer[base_index + 1] = first;
+    buffer[base_index + 2] = second;
+    buffer[base_index + 3] = third;
+    buffer[base_index + 4] = fourth;
+
+    buffer[base_index + 5] = port / 256;
+    buffer[base_index + 6] = port % 256;
+
+    buffer[base_index + 7] = 0;
+    buffer[base_index + 8] = 0;
+
+    base_index += 9;
+
+    int num_nodes = mat.size();
+
+    for (int adj_node=0; adj_node<num_nodes; adj_node++) {
+        if (mat[n][adj_node] <= 0) continue;
+        
+        int cost = mat[n][adj_node];
+        int adj_fd = client_sockets[adj_node];
+        auto [adjip, adjport] = client_info[adj_fd];
+        
+        buffer[base_index] = adj_node;
+
+        vector<int> vecip = getComponents(adjip);
+        int first = vecip[0];
+        int second = vecip[1];
+        int third = vecip[2];
+        int fourth = vecip[3];
+
+        buffer[base_index + 1] = first;
+        buffer[base_index + 2] = second;
+        buffer[base_index + 3] = third;
+        buffer[base_index + 4] = fourth;
+
+        buffer[base_index + 5] = adjport / 256;
+        buffer[base_index + 6] = adjport % 256;
+
+        buffer[base_index + 7] = cost / 256;
+        buffer[base_index + 8] = cost % 256;
+
+        base_index += 9;
+    }
+
+    for (int index = base_index; index < base_index + 9; index++)
+        buffer[index] = 255;
+}
+
+pair<string, int> getVNAddrPort(unsigned char * buffer){
+    string first = to_string(buffer[0]);
+    string second = to_string(buffer[1]);
+    string third = to_string(buffer[2]);
+    string fourth = to_string(buffer[3]);
+    string ipaddr = first + "." + second + "." + third + "." + fourth;
+
+    int udpport = buffer[4];
+    udpport *= 256;
+    udpport += (int) buffer[5];
+
+    return {ipaddr, udpport};
 }
 
 // accept more nodes
@@ -153,10 +200,10 @@ int acceptMoreNodes(int oracle_fd, int old_size, vector<vector<int>> & new_adj,
         for (int i=old_size; i<new_size; i++) {
             int client_fd = client_sockets[i];
             if (client_fd != -1 && FD_ISSET(client_fd, &read_fd)) {
-                char buffer[BUFFER_SIZE];
+                unsigned char buffer[BUFFER_SIZE];
                 memset(buffer, '\0', BUFFER_SIZE);
 
-                recv(client_fd, buffer, BUFFER_SIZE, 0);
+                recv(client_fd, (char *)buffer, BUFFER_SIZE, 0);
 
                 // store information about virtual node
                 client_info[client_fd] = getVNAddrPort(buffer);
@@ -181,8 +228,9 @@ int acceptMoreNodes(int oracle_fd, int old_size, vector<vector<int>> & new_adj,
     for (int i=0; i<new_size; i++) {
         if (!active[i]) continue;
         int fd = client_sockets[i];
-        string msg = generate_link_state_message(i, new_adj, client_info, client_sockets);
-        send(fd, msg.c_str(), msg.length(), 0);        
+        unsigned char buffer[BUFFER_SIZE];
+        generate_link_state_message(buffer, i, new_adj, client_info, client_sockets);
+        send(fd, (char *) buffer, BUFFER_SIZE, 0);        
     }
 
     return 0;
@@ -277,8 +325,9 @@ int main(int argc, char * argv[]) {
                     if (changed) {
                         // send link state of i
                         int fd = client_sockets[i];
-                        string msg = generate_link_state_message(i, new_adj, client_info, client_sockets);
-                        if (send(fd, msg.c_str(), msg.length(), 0) < 0) {
+                        unsigned char buffer[BUFFER_SIZE];
+                        generate_link_state_message(buffer, i, new_adj, client_info, client_sockets);
+                        if (send(fd, (char *) buffer, BUFFER_SIZE, 0) < 0) {
                             perror("Sending failed");
                             return EXIT_FAILURE;
                         }

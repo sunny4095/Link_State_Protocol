@@ -14,30 +14,41 @@ TCP_PORT_ORACLE = 5000
 
 tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 tcp_socket.connect((IP_ADDR_ORACLE, TCP_PORT_ORACLE))
-tcp_socket.send(f"{IP_ADDR},{UDP_PORT}".encode())
-link_state_info = tcp_socket.recv(1024).decode()
+ipaslist = [int(i) for i in IP_ADDR.split(".")]
+ipaslist.extend([UDP_PORT // 256, UDP_PORT % 256])
+tcp_socket.send(bytes(ipaslist))
+link_state_info = tcp_socket.recv(1024)
 
 # for global information
-adj_list = [[-1 for _ in range(26)] for _ in range(26)]
+adj_list = [[0 for _ in range(26)] for _ in range(26)]
 
 # process configuration message from oracle node, return self_id, neighbour_info and ip_port_to_id
 def process_link_state_info(link_state_info):
-    info = link_state_info.split(';')
-    self_id = int(info[0].split(',')[0])
+    self_id = int(link_state_info[0])
+
     neighbour_info = {}
     ip_port_to_id = {}
 
-    for other_node_info in info[1:]:
-        neigh_id, neigh_ip, neigh_udp_port, cost = other_node_info.split(',')
-        neigh_id = int(neigh_id)
-        neigh_udp_port = int(neigh_udp_port)
-        cost = int(cost)
-        neighbour_info[neigh_id] = (neigh_ip, neigh_udp_port)
-        ip_port_to_id[(neigh_ip, neigh_udp_port)] = neigh_id
+    base_index = 9
+
+    while base_index + 9 < len(link_state_info) and int(link_state_info[base_index]) != 255:
+        neigh_id = int(link_state_info[base_index])
+        first, second, third, fourth = link_state_info[base_index + 1:base_index + 5]
+        first, second, third, fourth = int(first), int(second), int(third), int(fourth)
+        neigh_ip = str(first) + "." + str(second) + "." + str(third) + "." + str(fourth)
+        neigh_port = int(link_state_info[base_index + 5]) * 256 
+        neigh_port += int(link_state_info[base_index + 6])
+        cost = int(link_state_info[base_index + 7]) * 256
+        cost += int(link_state_info[base_index + 8])
+
+        neighbour_info[neigh_id] = (neigh_ip, neigh_port)
+        ip_port_to_id[(neigh_ip, neigh_port)] = neigh_id
 
         # store cost into global information structure
         adj_list[self_id][neigh_id] = cost
         adj_list[neigh_id][self_id] = cost
+
+        base_index += 9
 
     return self_id, neighbour_info, ip_port_to_id
 
@@ -50,24 +61,36 @@ seq_num[self_id] = 0
 udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_socket.bind((IP_ADDR, UDP_PORT))
 
-# function to generate LSP
+# function to generate LSP, returns a bytes array
 def generateLSP():
-    packet = f"{self_id}|{seq_num[self_id]}|{adj_list[self_id]}"
+    packet = [0 for _ in range(55)]
+
+    packet[0] = self_id
+    packet[1] = seq_num[self_id] // 256
+    packet[2] = seq_num[self_id] % 256
+
+    base_index = 3
+    for neigh in range(26):
+        packet[base_index] = adj_list[self_id][neigh] // 256
+        packet[base_index + 1] = adj_list[self_id][neigh] % 256
+        base_index += 2
+
     seq_num[self_id] += 1
-    return packet
+    print(packet)
+    return bytes(packet)
 
 # function to flood LSPs to neighbours
 def flood():
     print("flooding packets")
     packet = generateLSP()
     for neigh in neighbour_info:
-        udp_socket.sendto(packet.encode(), neighbour_info[neigh])
+        udp_socket.sendto(packet, neighbour_info[neigh])
     
 def handle_update_ls():
     info, addr = udp_socket.recvfrom(1024)
-    info = info.decode()
-    id, seq, data = info.split('|')
-    id, seq, data = int(id), int(seq), eval(data)
+
+    id = int(info[0])
+    seq = int(info[1]) * 256 + int(info[2])
 
     print(f"received packet from {id} with seq num {seq}")
     
@@ -76,10 +99,15 @@ def handle_update_ls():
         print("dropped the old packet")
         return
     
-    # if packet new, update adj_list, and the latest seq_num we've seen from that guy
-    adj_list[id] = data
+    base_index = 3
+    for neigh in range(26):
+        # copy values from info to adj_list
+        adj_list[id][neigh] = int(info[base_index]) * 256 + int(info[base_index + 1])
+        base_index += 2
+
+    # update highest seq num seen
     seq_num[id] = seq
-    
+
     # obtain sender id
     sender_id = ip_port_to_id[addr]
 
@@ -88,7 +116,7 @@ def handle_update_ls():
     for neigh in neighbour_info:
         if neigh == sender_id:
             continue
-        udp_socket.sendto(info.encode(), neighbour_info[neigh])
+        udp_socket.sendto(info, neighbour_info[neigh])
     
     return
 
@@ -102,13 +130,13 @@ def get_curr_size(adj_list):
         m = (l + r) // 2
         row_null = True
         for i in range(26):
-            if adj_list[m][i] != -1:
+            if adj_list[m][i] != 0:
                 row_null = False
                 break
 
         col_null = True
         for i in range(26):
-            if adj_list[i][m] != -1:
+            if adj_list[i][m] != 0:
                 col_null = False
                 break
         
@@ -142,9 +170,9 @@ while True:
     else:
         # update link state of current node, adj_list and flood LSPs
         if tcp_socket in read_fds:
-            adj_list[self_id] = [-1 for _ in range(26)]
+            adj_list[self_id] = [0 for _ in range(26)]
 
-            link_state_info = tcp_socket.recv(1024).decode()
+            link_state_info = tcp_socket.recv(1024)
             _, neighbour_info, ip_port_to_id = process_link_state_info(link_state_info)
             
             flood()
